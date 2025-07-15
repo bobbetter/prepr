@@ -2,15 +2,6 @@
 
 An intelligent CLI tool that helps you prepare for interviews by generating personalized questions and providing feedback on your answers. Built with **LlamaIndex Workflows** for true agentic processing, LlamaParse for advanced document processing, and OpenAI for intelligent question generation and feedback.
 
-## Features
-
-- 🤖 **Agentic Workflow Architecture**: Built using LlamaIndex Workflows with proper event-driven processing
-- 📄 **CV Parsing**: Automatically extracts text from PDF CVs using LlamaParse
-- 🔒 **Privacy Protection**: Anonymizes company names and personal information
-- 🎯 **Smart Question Generation**: Creates tailored interview questions based on your background, job requirements, and interviewer profile
-- 💡 **AI Feedback**: Provides constructive feedback on your answers using advanced LLM analysis
-- 🔧 **LlamaIndex Integration**: Leverages semantic search and retrieval for contextual understanding
-- 👤 **Human-in-the-Loop**: Proper workflow integration for interactive user input
 
 ## Prerequisites
 
@@ -18,14 +9,12 @@ Before using this tool, you'll need:
 
 1. **OpenAI API Key** - For question generation and feedback
 2. **LlamaParse API Key** - For PDF parsing (get it from [LlamaIndex](https://cloud.llamaindex.ai/))
-3. **Python 3.8+**
+3. **mem0 API Key** - To give the agent ability to remember previously asked questions / uploaded document
 
 ## Installation
 
 1. **Clone or download this repository**
-   ```bash
-   cd interview_prep
-   ```
+
 
 2. **Install dependencies**
    ```bash
@@ -38,6 +27,7 @@ Before using this tool, you'll need:
    ```
    OPENAI_API_KEY=your_openai_api_key_here
    LLAMA_PARSE_API_KEY=your_llama_parse_api_key_here
+   MEM0_API_KEY=your_mem0_api_key_here
    ```
 
 ## Usage
@@ -97,83 +87,3 @@ Interview style: Focuses on problem-solving and system design
 Prefers practical examples over theoretical knowledge
 Values clean code and scalability discussions
 ```
-
-## Privacy and Anonymization
-
-The tool automatically anonymizes:
-- Personal names → `[NAME]`
-- Company names → `[COMPANY]`
-- Email addresses → `[EMAIL]`
-- Phone numbers → `[PHONE]`
-
-This ensures your sensitive information is protected during processing.
-
-## Architecture
-
-The tool uses a sophisticated **LlamaIndex Workflows** architecture:
-
-### Workflow Steps:
-1. **CV Parsing Step**: Parses PDF and anonymizes content using LlamaParse
-2. **Job Description Loading Step**: Loads and processes job requirements
-3. **Interviewer Info Loading Step**: Loads interviewer background information
-4. **Question Generation Step**: Creates personalized questions using semantic analysis
-5. **Human-in-the-Loop Step**: Captures user answer through InputRequiredEvent
-6. **Feedback Generation Step**: Analyzes answer and provides constructive feedback
-
-### Core Technologies:
-- **LlamaIndex Workflows**: Event-driven agentic processing with StartEvent, StopEvent, and custom events
-- **LlamaParse**: Advanced PDF parsing with structure preservation
-- **LlamaIndex**: Document indexing and semantic retrieval
-- **OpenAI GPT-4**: Question generation and feedback analysis
-- **Click**: User-friendly CLI interface
-- **Human-in-the-Loop Events**: InputRequiredEvent and HumanResponseEvent for interactive processing
-
-## Troubleshooting
-
-### Common Issues
-
-1. **API Key Errors**
-   - Ensure both `OPENAI_API_KEY` and `LLAMA_PARSE_API_KEY` are set correctly
-   - Check that your OpenAI account has sufficient credits
-
-2. **PDF Parsing Issues**
-   - Ensure the CV file exists and is a valid PDF
-   - LlamaParse works best with text-based PDFs (not scanned images)
-
-3. **File Not Found Errors**
-   - Check file paths are correct and files exist
-   - Use absolute paths if relative paths don't work
-
-### Getting API Keys
-
-1. **OpenAI API Key**:
-   - Go to [OpenAI Platform](https://platform.openai.com/api-keys)
-   - Create an account and generate an API key
-
-2. **LlamaParse API Key**:
-   - Visit [LlamaIndex Cloud](https://cloud.llamaindex.ai/)
-   - Sign up and get your API key from the dashboard
-
-## Future Enhancements
-
-Potential improvements leveraging the workflow architecture:
-- **Multi-Round Interviews**: Extend workflow with multiple question/feedback cycles
-- **Adaptive Questioning**: Dynamic question generation based on previous answers
-- **Web interface for easier file uploads**: Convert CLI to web-based interface while maintaining workflow backend
-- **Interview session recording and analysis**: Add workflow steps for session persistence
-- **Company-specific question templates**: Create specialized workflow branches for different company types
-- **Integration with job boards**: Add workflow steps for automatic job description fetching
-- **Parallel Processing**: Use workflow's event system for concurrent question generation
-- **Custom Agent Integration**: Add specialized agents for different interview types (technical, behavioral, etc.)
-
-## Support
-
-If you encounter issues:
-1. Check that all dependencies are installed correctly
-2. Verify API keys are valid and have sufficient credits
-3. Ensure input files are properly formatted
-4. Review error messages for specific guidance
-
----
-
-Happy interviewing! 🎯 
