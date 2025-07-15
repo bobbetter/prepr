@@ -379,7 +379,8 @@ class InterviewPrepAgent:
             r'\bFacebook\b', r'\bNetflix\b', r'\bTesla\b', r'\bUber\b', r'\bAirbnb\b',
             r'\bStripe\b', r'\bSpotify\b', r'\bSlack\b', r'\bZoom\b', r'\bDropbox\b',
             r'\bSalesforce\b', r'\bOracle\b', r'\bIBM\b', r'\bIntel\b', r'\bNVIDIA\b',
-            r'\bAdobe\b', r'\bTwitter\b', r'\bLinkedIn\b', r'\bSquare\b', r'\bPayPal\b',
+            r'\bAdobe\b', r'\bTwitter\b', r'\bLinkedIn\b', r'\bSquare\b', r'\bPayPal\b', 
+            r'\bSiriusXM\b', r'\bPandora\b'
         ]
         
         for pattern in company_patterns:
