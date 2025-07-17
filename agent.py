@@ -11,8 +11,6 @@ from llama_index.llms.openai import OpenAI
 from llama_parse import LlamaParse
 from mem0 import MemoryClient
 from llama_index.core.workflow import (
-    InputRequiredEvent,
-    HumanResponseEvent,
     Context,
 )
 
@@ -35,16 +33,19 @@ class PreprContext(BaseModel):
 class InterviewPrepAgent:
     """Agentic interview preparation assistant using function calling."""
     
-    def __init__(self, ctx: Context[PreprContext]):
+    def __init__(self):
         self.setup_apis()
         self.setup_llm()
-        self.context = {}  # Store parsed data
+        
+        # Initialize state
+        self.state = PreprContext()
+        
         self.tools = self.create_tools()
         self.agent = self.create_agent()
         
         # Restore context from memory on startup
-        print("🔄 Checking for existing context in memory...")  
-        self._restore_all_context_from_memory(ctx)
+        print("🔄 Agent initialized, restoring context from memory...")
+        self._restore_all_context_from_memory_sync()  
         
     def setup_apis(self):
         """Setup API keys and clients."""
@@ -77,7 +78,7 @@ class InterviewPrepAgent:
     def setup_llm(self):
         """Setup LlamaIndex LLM configuration."""
         self.llm = OpenAI(
-            model="gpt-4",
+            model="gpt-4.1",
             temperature=0.7,
             api_key=self.openai_api_key
         )
@@ -101,10 +102,45 @@ class InterviewPrepAgent:
     def _filter_memories(self, memories, context_type: ContextType):
         return [x for x in memories if x["metadata"] == {'context_type': context_type.value}]
     
+    def _restore_all_context_from_memory_sync(self):
+        """Restore all context items from memory on startup (synchronous version)."""
+        for context_type in ContextType:
+            self._restore_context_from_memory_sync(context_type)
+    
     async def _restore_all_context_from_memory(self, ctx: Context[PreprContext]):
         """Restore all context items from memory on startup."""
         for context_type in ContextType:
             await self._restore_context_from_memory(ctx, context_type)
+
+    def _restore_context_from_memory_sync(self, context_type: ContextType):
+        """Restore specific context item from memory (synchronous version)."""
+        try:
+            # Search for stored context items
+            all_memories = self.direct_memory.get_all(
+                user_id=self.user_id,
+            )
+            # Helper function needed, as SDK filter doesnt work
+            memories = self._filter_memories(all_memories, context_type)
+
+            if not memories:
+                return
+                
+            # Get the most recent memory for this context type
+            memory_content = memories[0].get('memory', '')
+            
+            match context_type:
+                case ContextType.CV:
+                    self.state.cv_text = memory_content
+                    self.state.cv_loaded = True
+                case ContextType.JOB_DESCRIPTION:
+                    self.state.job_description = memory_content
+                    self.state.job_loaded = True
+                case ContextType.INTERVIEWER_INFO:
+                    self.state.interviewer_info = memory_content
+                    self.state.interviewer_loaded = True
+            print(f"🎉 Restored {context_type.value} from memory")
+        except Exception as e:
+            print(f"❌ Error restoring {context_type.value} from memory: {str(e)}")
 
     async def _restore_context_from_memory(self, ctx: Context[PreprContext], context_type: ContextType):
         """Restore specific context item from memory."""
@@ -135,18 +171,11 @@ class InterviewPrepAgent:
         except Exception as e:
             print(f"❌ Error restoring context from memory: {str(e)}")
     
-    async def parse_cv(self, ctx: Context[PreprContext]) -> None:
+    def parse_cv(self, cv_file_path: str) -> str:
         """Parse CV PDF using LlamaParse and anonymize the content."""
-        question = "What is the path to the CV file?"
-        response = await ctx.wait_for_event(
-            HumanResponseEvent,
-            waiter_id=question,
-            waiter_event=InputRequiredEvent(
-                prefix=question,
-            ),
-        )
-        cv_file_path = response.response
-        
+        if not cv_file_path:
+            return "❌ Error: Please provide the path to your CV file."
+            
         if not os.path.exists(cv_file_path):
             return f"❌ Error: CV file not found: {cv_file_path}"
             
@@ -164,108 +193,78 @@ class InterviewPrepAgent:
             # Anonymize the text
             anonymized_cv_text = self.anonymize_text(cv_text.strip())
             
-            # Store in context
-            state = await ctx.store.get_state()
-            state.cv_text = anonymized_cv_text
-            state.cv_loaded = True
-            await ctx.store.set_state(state)
+            # Store in instance state
+            self.state.cv_text = anonymized_cv_text
+            self.state.cv_loaded = True
                 
             # Store in memory for persistence
             self._store_context_in_memory(anonymized_cv_text, ContextType.CV)
             
-            print("✅ CV parsed, anonymized, and stored in memory!")
+            return "✅ CV parsed, anonymized, and stored in memory!"
             
         except Exception as e:
-            print(f"❌ Error parsing CV: {str(e)}")
+            return f"❌ Error parsing CV: {str(e)}"
     
-    async def load_job_description(self, ctx: Context[PreprContext]) -> None:
+    def load_job_description(self, job_desc_file_path: str) -> str:
         """Load job description from text file."""
-        question = "What is the path to the job description file?"
-        response = await ctx.wait_for_event(
-            HumanResponseEvent,
-            waiter_id=question,
-            waiter_event=InputRequiredEvent(
-                prefix=question,
-            ),
-        )
-        job_desc_file_path = response.response
+        if not job_desc_file_path:
+            return "❌ Error: Please provide the path to your job description file."
+            
         if not os.path.exists(job_desc_file_path):
-            print(f"❌ Error: Job description file not found: {job_desc_file_path}")
-            return None
+            return f"❌ Error: Job description file not found: {job_desc_file_path}"
             
         try:
             with open(job_desc_file_path, 'r', encoding='utf-8') as f:
                 job_description = f.read().strip()
                 
-            # Store in context
-            state = await ctx.store.get_state()
-            state.job_description = job_description
-            state.job_loaded = True
-            await ctx.store.set_state(state)
+            # Store in instance state
+            self.state.job_description = job_description
+            self.state.job_loaded = True
             
             # Store in memory for persistence
             self._store_context_in_memory(job_description, ContextType.JOB_DESCRIPTION)
-            print("✅ Job description loaded and stored in memory!")
+            return "✅ Job description loaded and stored in memory!"
             
         except Exception as e:
-            print(f"❌ Error reading job description file: {str(e)}")
+            return f"❌ Error reading job description file: {str(e)}"
     
-    async def load_interviewer_info(self, ctx: Context[PreprContext]) -> None:
+    def load_interviewer_info(self, interviewer_file_path: str) -> str:
         """Load interviewer information from text file."""
-        question = "What is the path to the interviewer info file?"
-        response = await ctx.wait_for_event(
-            HumanResponseEvent,
-            waiter_id=question,
-            waiter_event=InputRequiredEvent(
-                prefix=question,
-            ),
-        )
-        interviewer_file_path = response.response
+        if not interviewer_file_path:
+            return "❌ Error: Please provide the path to your interviewer info file."
+            
         if not os.path.exists(interviewer_file_path):
-            print(f"❌ Error: Interviewer info file not found: {interviewer_file_path}")
-            return None
+            return f"❌ Error: Interviewer info file not found: {interviewer_file_path}"
             
         try:
             with open(interviewer_file_path, 'r', encoding='utf-8') as f:
                 interviewer_info = f.read().strip()
                 
-            # Store in context
-            state = await ctx.store.get_state()
-            state.interviewer_info = interviewer_info
-            state.interviewer_loaded = True
-            await ctx.store.set_state(state)
+            # Store in instance state
+            self.state.interviewer_info = interviewer_info
+            self.state.interviewer_loaded = True
             
             # Store in memory for persistence
             self._store_context_in_memory(interviewer_info, ContextType.INTERVIEWER_INFO)
-            print("✅ Interviewer information loaded and stored in memory!")
+            return "✅ Interviewer information loaded and stored in memory!"
             
         except Exception as e:
-            print(f"❌ Error reading interviewer info file: {str(e)}")
+            return f"❌ Error reading interviewer info file: {str(e)}"
     
-    async def generate_question(self, ctx: Context[PreprContext]) -> str:
-        """Generate an interview question based on available context."""
-        print("🤔 Generating interview question...")
-        # Check what context we have using centralized keys
+    def generate_question(self, question_type: str = "mixed") -> str:
+        """Generate an interview question based on available context."""        
+        # Check what context we have
         missing_context = []
-        state = await ctx.store.get_state()
-        for context_type in ContextType:
-            if not getattr(state, context_type.value):
-                missing_context.append(context_type.name.replace('_', ' ').title())
+        if not self.state.cv_loaded:
+            missing_context.append("CV")
+        if not self.state.job_loaded:
+            missing_context.append("Job Description")
+        if not self.state.interviewer_loaded:
+            missing_context.append("Interviewer Info")
             
         if missing_context:
-            print(f"❌ Cannot generate question. Missing context: {', '.join(missing_context)}. Please load the missing files first.")
-            return None
-        
+            return f"❌ Cannot generate question. Missing context: {', '.join(missing_context)}. Please load the missing files first using the appropriate tools."
 
-        question = "What type of question do you want to be asked?"
-        response = await ctx.wait_for_event(
-            HumanResponseEvent,
-            waiter_id=question,
-            waiter_event=InputRequiredEvent(
-                prefix=question,
-            ),
-        )
-        question_type = response.response
         try:
             print("\n🤔 Generating interview question...")
             
@@ -277,8 +276,8 @@ class InterviewPrepAgent:
                 2. Relates to the candidate's technical experience
                 3. Would be appropriate for the interviewer's technical background
                 4. Requires problem-solving or system design thinking
-                
-                Return ONLY the question, no additional explanation.
+
+                IMPORTANT: Return ONLY the question text. DO NOT provide an answer, explanation, or additional commentary.
                 """,
                 "behavioral": """
                 Generate ONE behavioral interview question that:
@@ -286,8 +285,8 @@ class InterviewPrepAgent:
                 2. Relates to the candidate's background and experience
                 3. Would help assess cultural fit
                 4. Uses the STAR method format
-                
-                Return ONLY the question, no additional explanation.
+
+                IMPORTANT: Return ONLY the question text. DO NOT provide an answer, explanation, or additional commentary.
                 """,
                 "mixed": """
                 Generate ONE thoughtful interview question that:
@@ -295,8 +294,8 @@ class InterviewPrepAgent:
                 2. Relates to the candidate's experience
                 3. Would be appropriate for the interviewer's style/background
                 4. Is challenging but fair
-                
-                Return ONLY the question, no additional explanation.,
+
+                IMPORTANT: Return ONLY the question text. DO NOT provide an answer, explanation, or additional commentary.
                 """,
                 "open": """
                 Generate ONE open-ended interview question that:
@@ -304,8 +303,8 @@ class InterviewPrepAgent:
                 2. Relates to the candidate's experience
                 3. Would be appropriate for the interviewer's style/background
                 4. Is challenging but fair
-                
-                Return ONLY the question, no additional explanation.
+
+                IMPORTANT: Return ONLY the question text. DO NOT provide an answer, explanation, or additional commentary.
                 """
             }
             
@@ -314,13 +313,13 @@ class InterviewPrepAgent:
             You are an expert interviewer helping to create personalized interview questions.
             
             CANDIDATE'S CV (Anonymized):
-            {state.cv_text}
+            {self.state.cv_text}
             
             JOB DESCRIPTION:
-            {state.job_description}
+            {self.state.job_description}
             
             INTERVIEWER INFORMATION:
-            {state.interviewer_info}
+            {self.state.interviewer_info}
             
             TASK:
             {question_prompts.get(question_type, question_prompts["mixed"])}
@@ -335,23 +334,21 @@ class InterviewPrepAgent:
         except Exception as e:
             return f"❌ Error generating question: {str(e)}"
     
-    async def get_context_status(self, ctx: Context[PreprContext]) -> str:
+    def get_context_status(self) -> str:
         """Get current status of loaded context."""
         context_status = "📊 CURRENT CONTEXT STATUS:\n\n"
-        state = await ctx.store.get_state()
-        # Check each context item using centralized keys
 
-        if state.cv_loaded:
+        if self.state.cv_loaded:
             context_status += "✅ CV: Loaded\n"
         else:
             context_status += "❌ CV: Not loaded\n"
 
-        if state.job_loaded:
+        if self.state.job_loaded:
             context_status += "✅ Job description: Loaded\n"
         else:   
             context_status += "❌ Job description: Not loaded\n"
 
-        if state.interviewer_loaded:
+        if self.state.interviewer_loaded:
             context_status += "✅ Interviewer info: Loaded\n"
         else:
             context_status += "❌ Interviewer info: Not loaded\n"
@@ -416,38 +413,30 @@ class InterviewPrepAgent:
             FunctionTool.from_defaults(
                 fn=self.parse_cv,
                 name="parse_cv",
-                description="Parse and anonymize a CV PDF file. Requires the full file path to the CV PDF."
+                description="Parse and anonymize a CV PDF file. Requires the full file path to the CV PDF as a parameter."
             ),
             FunctionTool.from_defaults(
                 fn=self.load_job_description,
-                name="load_job_description",
-                description="Load job description from a text file. Requires the full file path to the job description text file."
+                name="load_job_description", 
+                description="Load job description from a text file. Requires the full file path to the job description text file as a parameter."
             ),
             FunctionTool.from_defaults(
                 fn=self.load_interviewer_info,
                 name="load_interviewer_info",
-                description="Load interviewer information from a text file. Requires the full file path to the interviewer info text file."
+                description="Load interviewer information from a text file. Requires the full file path to the interviewer info text file as a parameter."
             ),
             FunctionTool.from_defaults(
                 fn=self.generate_question,
                 name="generate_question",
-                description="Generate an interview question based on loaded context. Ask the user what type of question they want to be asked: 'technical', 'behavioral', 'mixed', or 'open'."
+                description="Generate an interview question based on loaded context. Optionally specify question type: 'technical', 'behavioral', 'mixed' (default), or 'open'.",
+                return_direct=True
             ),
-            # FunctionTool.from_defaults(
-            #     fn=self.provide_feedback,
-            #     name="provide_feedback",
-            #     description="Provide feedback on the user's answer to the current interview question. Requires the user's answer as input."
-            # ),
             FunctionTool.from_defaults(
                 fn=self.get_context_status,
                 name="get_context_status",
-                description="Get the current status of loaded context (CV, job description, interviewer info, current question)."
+                description="Get the current status of loaded context (CV, job description, interviewer info). Call this first to see what needs to be loaded.",
+                return_direct=True
             ),
-            # FunctionTool.from_defaults(
-            #     fn=self.clear_context_memory,
-            #     name="clear_context_memory",
-            #     description="Clear all context items from memory and local storage."
-            # )
         ]
         return tools
     
@@ -456,40 +445,50 @@ class InterviewPrepAgent:
         system_prompt = """You are an intelligent interview preparation assistant. You help users prepare for job interviews by:
 
 1. Parsing their CV and anonymizing it
-2. Loading job descriptions and interviewer information
+2. Loading job descriptions and interviewer information  
 3. Generating relevant interview questions
 
+CRITICAL: When a user first contacts you, IMMEDIATELY use the 'get_context_status' tool to check what context is already loaded from memory.
 
-So, you have to load the context first, then you can generate questions.
-To be clear, the full context is:
-- CV
-- Job description
-- Interviewer information
-You can use the tool 'get_context_status' to check what context is currently loaded.
+The full context required is:
+- CV (PDF file)
+- Job description (text file)
+- Interviewer information (text file)
 
-Only if you have all that context, you can generate questions. Otherwise, you will need to load that context first, 
-by asking the user for the path to the file and using the tools to load it.
+WORKFLOW:
+1. FIRST: Always call 'get_context_status' to see what's loaded
+2. For any missing context, guide the user to load it using the appropriate tools
+3. Only generate questions when ALL context is loaded
 
 You have access to tools that can:
+- get_context_status: Check what information is currently loaded (CALL THIS FIRST!)
 - parse_cv: Parse and anonymize CV PDF files
 - load_job_description: Load job description from text files
 - load_interviewer_info: Load interviewer information from text files
-- generate_question: Generate interview questions. Ask the user what type of question they want to be asked.
-- get_context_status: Check what information is currently loaded
-
+- generate_question: Generate interview questions (only when all context is loaded)
 
 IMPORTANT GUIDELINES:
-- Always check the if you have all the context (CV, job description, interviewer info) before generating questions
-- Ask for missing information when needed
-- Suggest next steps based on the current state
+- ALWAYS start by checking context status
+- Guide users step-by-step to load missing files
+- Ask for full file paths when loading files
+- Don't generate questions until all context is complete
 - Be conversational and helpful
+- Explain what each file should contain
 
-When a user first interacts with you, explain what you can do and guide them through the process. If they don't have all the required files, help them understand what they need."""
+CRITICAL TOOL USAGE RULES:
+- When a user asks for a question (e.g. "ask me a question", "give me a question", "generate a question", "ask me a [type] question"), ALWAYS use the 'generate_question' tool with the appropriate question type parameter.
+- After calling the 'generate_question' tool, ALWAYS return the complete tool output directly to the user. Do not modify, summarize, or add to the tool's response.
+- If a user asks for a different type of question after you've already asked one, treat it as a new question request and use the 'generate_question' tool again.
+- When a user provides an answer to a question, engage conversationally to provide feedback.
+- Always use tools for their intended purpose - don't try to do what tools do manually.
+
+When a user first interacts with you, immediately check context status and guide them through loading any missing information."""
 
         return FunctionAgent(
             tools=self.tools,
             llm=self.llm,
             system_prompt=system_prompt,
-            verbose=True
+            # verbose=True,
+            verbose=False
         )
     
