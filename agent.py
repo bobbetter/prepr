@@ -45,7 +45,7 @@ class InterviewPrepAgent:
         
         # Restore context from memory on startup
         print("🔄 Agent initialized, restoring context from memory...")
-        self._restore_all_context_from_memory_sync()  
+        self._restore_all_context_from_memory()  
         
     def setup_apis(self):
         """Setup API keys and clients."""
@@ -102,17 +102,13 @@ class InterviewPrepAgent:
     def _filter_memories(self, memories, context_type: ContextType):
         return [x for x in memories if x["metadata"] == {'context_type': context_type.value}]
     
-    def _restore_all_context_from_memory_sync(self):
+    def _restore_all_context_from_memory(self):
         """Restore all context items from memory on startup (synchronous version)."""
         for context_type in ContextType:
-            self._restore_context_from_memory_sync(context_type)
+            self._restore_context_from_memory(context_type)
     
-    async def _restore_all_context_from_memory(self, ctx: Context[PreprContext]):
-        """Restore all context items from memory on startup."""
-        for context_type in ContextType:
-            await self._restore_context_from_memory(ctx, context_type)
 
-    def _restore_context_from_memory_sync(self, context_type: ContextType):
+    def _restore_context_from_memory(self, context_type: ContextType):
         """Restore specific context item from memory (synchronous version)."""
         try:
             # Search for stored context items
@@ -141,35 +137,6 @@ class InterviewPrepAgent:
             print(f"🎉 Restored {context_type.value} from memory")
         except Exception as e:
             print(f"❌ Error restoring {context_type.value} from memory: {str(e)}")
-
-    async def _restore_context_from_memory(self, ctx: Context[PreprContext], context_type: ContextType):
-        """Restore specific context item from memory."""
-        try:
-            # Search for stored context items
-            all_memories = self.direct_memory.get_all(
-                user_id=self.user_id,
-            )
-            # Helper function needed, as SDK filter doesnt work
-            memory = self._filter_memories(all_memories, context_type)
-            state = await ctx.store.get_state()
-
-            if memory is None:
-                return
-            match context_type:
-
-                case ContextType.CV:
-                    state.cv_text = memory
-                    state.cv_loaded = True
-                case ContextType.JOB_DESCRIPTION:
-                    state.job_description = memory
-                    state.job_loaded = True
-                case ContextType.INTERVIEWER_INFO:
-                    state.interviewer_info = memory
-                    state.interviewer_loaded = True
-            print(f"🎉 Restored {context_type} from memory")
-            await ctx.store.set_state(state)
-        except Exception as e:
-            print(f"❌ Error restoring context from memory: {str(e)}")
     
     def parse_cv(self, cv_file_path: str) -> str:
         """Parse CV PDF using LlamaParse and anonymize the content."""
