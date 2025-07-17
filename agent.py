@@ -3,13 +3,18 @@ import re
 from typing import List
 from enum import Enum
 from dotenv import load_dotenv
-
+from pydantic import BaseModel
 from llama_index.core.tools import FunctionTool
 from llama_index.core.agent import FunctionCallingAgent
-#from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.llms.openai import OpenAI
 from llama_parse import LlamaParse
 from mem0 import MemoryClient
+from llama_index.core.workflow import (
+    InputRequiredEvent,
+    HumanResponseEvent,
+    Context,
+)
 
 # Load environment variables
 load_dotenv()
@@ -19,10 +24,18 @@ class ContextType(Enum):
     JOB_DESCRIPTION = "job_description"
     INTERVIEWER_INFO = "interviewer_info"
 
+class PreprContext(BaseModel):
+    cv_loaded: bool = False
+    job_loaded: bool = False
+    interviewer_loaded: bool = False
+    cv_text: str = None
+    job_description: str = None
+    interviewer_info: str = None
+
 class InterviewPrepAgent:
     """Agentic interview preparation assistant using function calling."""
     
-    def __init__(self):
+    def __init__(self, ctx: Context[PreprContext]):
         self.setup_apis()
         self.setup_llm()
         self.context = {}  # Store parsed data
@@ -30,8 +43,8 @@ class InterviewPrepAgent:
         self.agent = self.create_agent()
         
         # Restore context from memory on startup
-        print("🔄 Checking for existing context in memory...")
-        self.restore_all_context_from_memory()
+        print("🔄 Checking for existing context in memory...")  
+        self._restore_all_context_from_memory(ctx)
         
     def setup_apis(self):
         """Setup API keys and clients."""
@@ -52,14 +65,6 @@ class InterviewPrepAgent:
             result_type="text",
             verbose=True
         )
-
-        # # Initialize Mem0Memory for conversational memory (LlamaIndex integration)
-        # context = {"user_id": "interview_prep_agent"}
-        # self.memory = Mem0Memory.from_client(
-        #     api_key=self.mem0_api_key,
-        #     verbose=True,
-        #     context=context
-        # )
         
         # Initialize direct Mem0 Memory client for explicit context storage
         self.direct_memory = MemoryClient(
@@ -77,7 +82,7 @@ class InterviewPrepAgent:
             api_key=self.openai_api_key
         )
     
-    def store_context_in_memory(self, content: str, context_type: ContextType):
+    def _store_context_in_memory(self, content: str, context_type: ContextType):
         """Store specific context items in memory with metadata."""
         try:
             messages = [
@@ -93,16 +98,15 @@ class InterviewPrepAgent:
         except Exception as e:
             print(f"❌ Error storing {context_type} in memory: {str(e)}")
     
-
     def _filter_memories(self, memories, context_type: ContextType):
         return [x for x in memories if x["metadata"] == {'context_type': context_type.value}]
     
-    def restore_all_context_from_memory(self):
+    async def _restore_all_context_from_memory(self, ctx: Context[PreprContext]):
         """Restore all context items from memory on startup."""
         for context_type in ContextType:
-            self.restore_context_from_memory(context_type)
+            await self._restore_context_from_memory(ctx, context_type)
 
-    def restore_context_from_memory(self, context_type: ContextType):
+    async def _restore_context_from_memory(self, ctx: Context[PreprContext], context_type: ContextType):
         """Restore specific context item from memory."""
         try:
             # Search for stored context items
@@ -110,25 +114,39 @@ class InterviewPrepAgent:
                 user_id=self.user_id,
             )
             # Helper function needed, as SDK filter doesnt work
-            filtered_memories = self._filter_memories(all_memories, context_type)
+            memory = self._filter_memories(all_memories, context_type)
+            state = await ctx.store.get_state()
 
-            if len(filtered_memories) == 0:
-                print(f"📝 No {context_type} found in memory")
+            if memory is None:
                 return
-            elif len(filtered_memories) > 1:
-                print(f"📝 Multiple {context_type} found in memory, using the most recent one")
-                filtered_memories = filtered_memories[-1]
-            else:
-                filtered_memories = filtered_memories[0]
-            
-            self.context[context_type.value] = filtered_memories["memory"]
+            match context_type:
+
+                case ContextType.CV:
+                    state.cv_text = memory
+                    state.cv_loaded = True
+                case ContextType.JOB_DESCRIPTION:
+                    state.job_description = memory
+                    state.job_loaded = True
+                case ContextType.INTERVIEWER_INFO:
+                    state.interviewer_info = memory
+                    state.interviewer_loaded = True
             print(f"🎉 Restored {context_type} from memory")
-            
+            await ctx.store.set_state(state)
         except Exception as e:
             print(f"❌ Error restoring context from memory: {str(e)}")
     
-    def parse_cv(self, cv_file_path: str) -> str:
+    async def parse_cv(self, ctx: Context[PreprContext]) -> None:
         """Parse CV PDF using LlamaParse and anonymize the content."""
+        question = "What is the path to the CV file?"
+        response = await ctx.wait_for_event(
+            HumanResponseEvent,
+            waiter_id=question,
+            waiter_event=InputRequiredEvent(
+                prefix=question,
+            ),
+        )
+        cv_file_path = response.response
+        
         if not os.path.exists(cv_file_path):
             return f"❌ Error: CV file not found: {cv_file_path}"
             
@@ -147,71 +165,107 @@ class InterviewPrepAgent:
             anonymized_cv_text = self.anonymize_text(cv_text.strip())
             
             # Store in context
-            self.context[ContextType.CV.value] = anonymized_cv_text
+            state = await ctx.store.get_state()
+            state.cv_text = anonymized_cv_text
+            state.cv_loaded = True
+            await ctx.store.set_state(state)
                 
             # Store in memory for persistence
-            self.store_context_in_memory(anonymized_cv_text, ContextType.CV)
+            self._store_context_in_memory(anonymized_cv_text, ContextType.CV)
             
             print("✅ CV parsed, anonymized, and stored in memory!")
             
-            return f"CV successfully parsed, anonymized, and stored in memory.\n\nAnonymized CV Preview:\n{anonymized_cv_text[:500]}..."
-            
         except Exception as e:
-            return f"❌ Error parsing CV: {str(e)}"
+            print(f"❌ Error parsing CV: {str(e)}")
     
-    def load_job_description(self, job_desc_file_path: str) -> str:
+    async def load_job_description(self, ctx: Context[PreprContext]) -> None:
         """Load job description from text file."""
+        question = "What is the path to the job description file?"
+        response = await ctx.wait_for_event(
+            HumanResponseEvent,
+            waiter_id=question,
+            waiter_event=InputRequiredEvent(
+                prefix=question,
+            ),
+        )
+        job_desc_file_path = response.response
         if not os.path.exists(job_desc_file_path):
-            return f"❌ Error: Job description file not found: {job_desc_file_path}"
+            print(f"❌ Error: Job description file not found: {job_desc_file_path}")
+            return None
             
         try:
             with open(job_desc_file_path, 'r', encoding='utf-8') as f:
                 job_description = f.read().strip()
                 
             # Store in context
-            self.context[ContextType.JOB_DESCRIPTION.value] = job_description
+            state = await ctx.store.get_state()
+            state.job_description = job_description
+            state.job_loaded = True
+            await ctx.store.set_state(state)
             
             # Store in memory for persistence
-            self.store_context_in_memory(job_description, ContextType.JOB_DESCRIPTION)
-            
-            return f"✅ Job description loaded and stored in memory!\n\nJob Description Preview:\n{job_description[:500]}..."
+            self._store_context_in_memory(job_description, ContextType.JOB_DESCRIPTION)
+            print("✅ Job description loaded and stored in memory!")
             
         except Exception as e:
-            return f"❌ Error reading job description file: {str(e)}"
+            print(f"❌ Error reading job description file: {str(e)}")
     
-    def load_interviewer_info(self, interviewer_file_path: str) -> str:
+    async def load_interviewer_info(self, ctx: Context[PreprContext]) -> None:
         """Load interviewer information from text file."""
+        question = "What is the path to the interviewer info file?"
+        response = await ctx.wait_for_event(
+            HumanResponseEvent,
+            waiter_id=question,
+            waiter_event=InputRequiredEvent(
+                prefix=question,
+            ),
+        )
+        interviewer_file_path = response.response
         if not os.path.exists(interviewer_file_path):
-            return f"❌ Error: Interviewer info file not found: {interviewer_file_path}"
+            print(f"❌ Error: Interviewer info file not found: {interviewer_file_path}")
+            return None
             
         try:
             with open(interviewer_file_path, 'r', encoding='utf-8') as f:
                 interviewer_info = f.read().strip()
                 
             # Store in context
-            self.context[ContextType.INTERVIEWER_INFO.value] = interviewer_info
-  
+            state = await ctx.store.get_state()
+            state.interviewer_info = interviewer_info
+            state.interviewer_loaded = True
+            await ctx.store.set_state(state)
             
             # Store in memory for persistence
-            self.store_context_in_memory(interviewer_info, ContextType.INTERVIEWER_INFO)
-            
-            return f"✅ Interviewer information loaded and stored in memory!\n\nInterviewer Info Preview:\n{interviewer_info[:500]}..."
+            self._store_context_in_memory(interviewer_info, ContextType.INTERVIEWER_INFO)
+            print("✅ Interviewer information loaded and stored in memory!")
             
         except Exception as e:
-            return f"❌ Error reading interviewer info file: {str(e)}"
+            print(f"❌ Error reading interviewer info file: {str(e)}")
     
-    def generate_question(self, question_type: str = "mixed") -> str:
+    async def generate_question(self, ctx: Context[PreprContext]) -> str:
         """Generate an interview question based on available context."""
-        
+        print("🤔 Generating interview question...")
         # Check what context we have using centralized keys
         missing_context = []
+        state = await ctx.store.get_state()
         for context_type in ContextType:
-            if context_type.value not in self.context:
+            if not getattr(state, context_type.value):
                 missing_context.append(context_type.name.replace('_', ' ').title())
             
         if missing_context:
-            return f"❌ Cannot generate question. Missing context: {', '.join(missing_context)}. Please load the missing files first."
+            print(f"❌ Cannot generate question. Missing context: {', '.join(missing_context)}. Please load the missing files first.")
+            return None
         
+
+        question = "What type of question do you want to be asked?"
+        response = await ctx.wait_for_event(
+            HumanResponseEvent,
+            waiter_id=question,
+            waiter_event=InputRequiredEvent(
+                prefix=question,
+            ),
+        )
+        question_type = response.response
         try:
             print("\n🤔 Generating interview question...")
             
@@ -260,13 +314,13 @@ class InterviewPrepAgent:
             You are an expert interviewer helping to create personalized interview questions.
             
             CANDIDATE'S CV (Anonymized):
-            {self.context[ContextType.CV.value]}
+            {state.cv_text}
             
             JOB DESCRIPTION:
-            {self.context[ContextType.JOB_DESCRIPTION.value]}
+            {state.job_description}
             
             INTERVIEWER INFORMATION:
-            {self.context[ContextType.INTERVIEWER_INFO.value]}
+            {state.interviewer_info}
             
             TASK:
             {question_prompts.get(question_type, question_prompts["mixed"])}
@@ -275,90 +329,34 @@ class InterviewPrepAgent:
             # Generate question using direct LLM call
             response = self.llm.complete(full_prompt)
             question = str(response).strip()
-            
-            # Store question in context
-            self.context["current_question"] = question
-            self.context["question_type"] = question_type
-            
+                            
             return f"🎯 INTERVIEW QUESTION ({question_type.upper()}):\n\n{question}\n\n💭 Please provide your answer, and I'll give you feedback!"
             
         except Exception as e:
             return f"❌ Error generating question: {str(e)}"
     
-    def provide_feedback(self, answer: str) -> str:
-        """Provide feedback on the user's answer to the current question."""
-        
-        if "current_question" not in self.context:
-            return "❌ No current question to provide feedback on. Please generate a question first."
-        
-        try:
-            print("\n🔄 Analyzing your answer...")
-            
-            # Create comprehensive prompt with all context
-            full_prompt = f"""
-            You are an expert interviewer providing constructive feedback on interview answers.
-            
-            INTERVIEW QUESTION: {self.context['current_question']}
-            
-            CANDIDATE'S ANSWER: {answer}
-            
-            CANDIDATE'S CV (Anonymized):
-            {self.context.get(ContextType.CV.value, 'Not available')}
-            
-            JOB DESCRIPTION:
-            {self.context.get(ContextType.JOB_DESCRIPTION.value, 'Not available')}
-            
-            INTERVIEWER INFORMATION:
-            {self.context.get(ContextType.INTERVIEWER_INFO.value, 'Not available')}
-            
-            TASK:
-            Please provide constructive feedback on this interview answer. Consider:
-            1. How well the answer addresses the question
-            2. Technical accuracy (if applicable)
-            3. Communication clarity
-            4. Areas for improvement
-            5. What the answer demonstrates about the candidate's fit for the role
-            6. Specific suggestions for improvement
-            
-            Provide specific, actionable feedback that would help the candidate improve.
-            """
-            
-            # Generate feedback using direct LLM call
-            response = self.llm.complete(full_prompt)
-            feedback = str(response).strip()
-            
-            # Store the answer and feedback
-            self.context["last_answer"] = answer
-            self.context["last_feedback"] = feedback
-            
-            return f"📝 FEEDBACK:\n\n{feedback}\n\n🎉 Feedback complete! You can ask for another question or more specific feedback."
-            
-        except Exception as e:
-            return f"❌ Error providing feedback: {str(e)}"
-    
-    def get_context_status(self) -> str:
+    async def get_context_status(self, ctx: Context[PreprContext]) -> str:
         """Get current status of loaded context."""
-        status = "📊 CURRENT CONTEXT STATUS:\n\n"
-        
+        context_status = "📊 CURRENT CONTEXT STATUS:\n\n"
+        state = await ctx.store.get_state()
         # Check each context item using centralized keys
-        for context_type in ContextType:
-            if context_type.value in self.context:
-                # Get preview of content (first 100 chars)
-                content_preview = str(self.context[context_type.value])[:100].replace('\n', ' ')
-                status += f"✅ {context_type.name.replace('_', ' ').title()}: Loaded\n"
-                status += f"   Preview: {content_preview}...\n\n"
-            else:
-                status += f"❌ {context_type.name.replace('_', ' ').title()}: Not loaded\n\n"
-        
-        # Check current question status
-        if "current_question" in self.context:
-            question_type = self.context.get("question_type", "unknown")
-            question_preview = self.context["current_question"][:100].replace('\n', ' ')
-            status += f"✅ Current Question ({question_type}): {question_preview}...\n"
+
+        if state.cv_loaded:
+            context_status += "✅ CV: Loaded\n"
         else:
-            status += "❌ Current Question: None\n"
+            context_status += "❌ CV: Not loaded\n"
+
+        if state.job_loaded:
+            context_status += "✅ Job description: Loaded\n"
+        else:   
+            context_status += "❌ Job description: Not loaded\n"
+
+        if state.interviewer_loaded:
+            context_status += "✅ Interviewer info: Loaded\n"
+        else:
+            context_status += "❌ Interviewer info: Not loaded\n"
             
-        return status
+        return context_status
     
     def anonymize_text(self, text: str) -> str:
         """Anonymize company names and personal information in the text."""
@@ -435,11 +433,11 @@ class InterviewPrepAgent:
                 name="generate_question",
                 description="Generate an interview question based on loaded context. Ask the user what type of question they want to be asked: 'technical', 'behavioral', 'mixed', or 'open'."
             ),
-            FunctionTool.from_defaults(
-                fn=self.provide_feedback,
-                name="provide_feedback",
-                description="Provide feedback on the user's answer to the current interview question. Requires the user's answer as input."
-            ),
+            # FunctionTool.from_defaults(
+            #     fn=self.provide_feedback,
+            #     name="provide_feedback",
+            #     description="Provide feedback on the user's answer to the current interview question. Requires the user's answer as input."
+            # ),
             FunctionTool.from_defaults(
                 fn=self.get_context_status,
                 name="get_context_status",
@@ -453,65 +451,45 @@ class InterviewPrepAgent:
         ]
         return tools
     
-    def create_agent(self) -> FunctionCallingAgent:
+    def create_agent(self) -> FunctionAgent:
         """Create the function calling agent."""
         system_prompt = """You are an intelligent interview preparation assistant. You help users prepare for job interviews by:
 
 1. Parsing their CV and anonymizing it
 2. Loading job descriptions and interviewer information
 3. Generating relevant interview questions
-4. Providing constructive feedback on answers
+
+
+So, you have to load the context first, then you can generate questions.
+To be clear, the full context is:
+- CV
+- Job description
+- Interviewer information
+You can use the tool 'get_context_status' to check what context is currently loaded.
+
+Only if you have all that context, you can generate questions. Otherwise, you will need to load that context first, 
+by asking the user for the path to the file and using the tools to load it.
 
 You have access to tools that can:
 - parse_cv: Parse and anonymize CV PDF files
 - load_job_description: Load job description from text files
 - load_interviewer_info: Load interviewer information from text files
 - generate_question: Generate interview questions. Ask the user what type of question they want to be asked.
-- provide_feedback: Analyze and provide feedback on interview answers
 - get_context_status: Check what information is currently loaded
-- clear_context_memory: Clear all context items from memory and local storage
+
 
 IMPORTANT GUIDELINES:
-- Always check the current context status before generating questions
-- Be encouraging and constructive in your feedback
+- Always check the if you have all the context (CV, job description, interviewer info) before generating questions
 - Ask for missing information when needed
 - Suggest next steps based on the current state
 - Be conversational and helpful
 
 When a user first interacts with you, explain what you can do and guide them through the process. If they don't have all the required files, help them understand what they need."""
 
-        agent = FunctionCallingAgent.from_tools(
+        return FunctionAgent(
             tools=self.tools,
             llm=self.llm,
             system_prompt=system_prompt,
-            # memory=self.memory,
             verbose=True
         )
-        return agent
     
-    async def chat(self):
-        """Start the interactive chat session."""
-        print("🎯 Welcome to the Interview Preparation Assistant!")
-        print("I can help you prepare for job interviews using your CV, job description, and interviewer information.")
-        print("Type 'quit' or 'exit' to end the session.\n")
-        
-        while True:
-            try:
-                user_input = input("\n💬 You: ").strip()
-                
-                if user_input.lower() in ['quit', 'exit']:
-                    print("👋 Goodbye! Good luck with your interview preparation!")
-                    break
-                
-                if not user_input:
-                    continue
-                
-                # Get response from agent
-                response = await self.agent.achat(user_input)
-                print(f"\n🤖 Assistant: {response}")
-                
-            except KeyboardInterrupt:
-                print("\n👋 Goodbye! Good luck with your interview preparation!")
-                break
-            except Exception as e:
-                print(f"❌ Error: {str(e)}")
