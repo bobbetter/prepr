@@ -5,14 +5,10 @@ from enum import Enum
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from llama_index.core.tools import FunctionTool
-from llama_index.core.agent import FunctionCallingAgent
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.llms.openai import OpenAI
 from llama_parse import LlamaParse
 from mem0 import MemoryClient
-from llama_index.core.workflow import (
-    Context,
-)
 
 # Load environment variables
 load_dotenv()
@@ -107,7 +103,6 @@ class InterviewPrepAgent:
         for context_type in ContextType:
             self._restore_context_from_memory(context_type)
     
-
     def _restore_context_from_memory(self, context_type: ContextType):
         """Restore specific context item from memory (synchronous version)."""
         try:
