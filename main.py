@@ -4,20 +4,19 @@ Interview Preparation Agentic Tool
 Uses FunctionCallingAgent with tools for flexible, intelligent interview preparation.
 """
 
-import warnings
-# Suppress all deprecation warnings to avoid LlamaIndex noise
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-# Alternative specific suppressions in case the above doesn't catch everything
-warnings.simplefilter("ignore", DeprecationWarning)
 
-from agent import InterviewPrepAgent, PreprContext
+from agent import InterviewPrepAgent
 import asyncio
 from llama_index.core.workflow import (
     InputRequiredEvent,
-    HumanResponseEvent,
-    Context
+    HumanResponseEvent
 )
 
+import warnings
+from pydantic.warnings import PydanticDeprecatedSince20
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=PydanticDeprecatedSince20)
 async def interactive_chat():
     """Run an interactive chat session with the agent."""
     print("🚀 Starting Interview Prep Agent...")
@@ -28,7 +27,7 @@ async def interactive_chat():
     
     # After agent initialization, re-apply warning filters
     warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.simplefilter("ignore", DeprecationWarning)
+    warnings.filterwarnings("ignore", category=PydanticDeprecatedSince20)
 
     print("\n🤖 Agent: Hello! I'm your interview preparation assistant.")
     print("Let me check what context information we have...")
