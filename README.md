@@ -1,6 +1,6 @@
-# Interview Preparation Agentic Tool
+# Interview Preparation Tool
 
-An intelligent CLI tool that helps you prepare for interviews by generating personalized questions and providing feedback on your answers. Built with **LlamaIndex Workflows** for true agentic processing, LlamaParse for advanced document processing, and OpenAI for intelligent question generation and feedback.
+A simple CLI tool that helps to prepare for interviews by generating personalized questions based on your CV and providing feedback on your answers. Built with LlamaIndex Workflows for agentic processing, LlamaParse for document processing, and OpenAI for question generation and feedback.
 
 
 ## Prerequisites
@@ -43,8 +43,8 @@ python main.py
 Before running, prepare these files:
 
 1. **CV PDF file** - Your resume in PDF format
-2. **Job description text file** - The job posting/requirements (save as `.txt`)
-3. **Interviewer information text file** - Details about the interviewer's background, role, style (save as `.txt`)
+2. **Job description text file** - The job posting/requirements (saved as `.txt`)
+3. **Interviewer information text file** - Details about the interviewer's background, role, style (saved as `.txt`)
 
 ### Example Workflow
 
